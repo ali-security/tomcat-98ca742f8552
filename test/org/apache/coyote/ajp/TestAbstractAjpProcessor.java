@@ -569,6 +569,67 @@ public class TestAbstractAjpProcessor extends TomcatBaseTest {
     }
 
     @Test
+    public void testSecretNearMiss() throws Exception {
+        Tomcat tomcat = getTomcatInstance();
+        Assert.assertTrue(tomcat.getConnector().setProperty("secret", "RIGHTSECRET"));
+        tomcat.start();
+
+        // No file system docBase required
+        Context ctx = getProgrammaticRootContext();
+
+        Tomcat.addServlet(ctx, "helloWorld", new HelloWorldServlet());
+        ctx.addServletMappingDecoded("/", "helloWorld");
+
+        StringManager smClient = StringManager.getManager("org.apache.catalina.valves");
+        String expectedBody = "<p><b>" + smClient.getString("errorReportValve.type") + "</b> " +
+                smClient.getString("errorReportValve.statusReport") + "</p>";
+
+        /*
+         * Secrets an attacker would try when guessing the secret one character at a time: same length differing only
+         * in the last / first character, a strict prefix, the correct secret with trailing data, a case variant and an
+         * empty value. All of them must be rejected.
+         */
+        String[] wrongSecrets = new String[] { "RIGHTSECREX", "XIGHTSECRET", "RIGHTSECRE", "RIGHTSECRETX",
+                "rightsecret", "R", "" };
+
+        SimpleAjpClient ajpClient = new SimpleAjpClient();
+        ajpClient.setPort(getPort());
+
+        for (String wrongSecret : wrongSecrets) {
+            ajpClient.connect();
+            validateCpong(ajpClient.cping());
+
+            TesterAjpMessage forwardMessage = ajpClient.createForwardMessage();
+            forwardMessage.addAttribute(0x0C, wrongSecret);
+            forwardMessage.end();
+
+            TesterAjpMessage responseHeaders = ajpClient.sendMessage(forwardMessage);
+            // Expect 3 packets: headers, body, end
+            validateResponseHeaders(responseHeaders, 403, "403");
+            TesterAjpMessage responseBody = ajpClient.readMessage();
+            validateResponseBody(responseBody, expectedBody);
+            validateResponseEnd(ajpClient.readMessage(), false);
+        }
+
+        // The correct secret (which arrives at a non-zero offset in the AJP message buffer) must still be accepted
+        ajpClient.connect();
+        validateCpong(ajpClient.cping());
+
+        TesterAjpMessage forwardMessage = ajpClient.createForwardMessage();
+        forwardMessage.addAttribute(0x0C, "RIGHTSECRET");
+        forwardMessage.end();
+
+        TesterAjpMessage responseHeaders = ajpClient.sendMessage(forwardMessage);
+        // Expect 3 packets: headers, body, end
+        validateResponseHeaders(responseHeaders, 200, "200");
+        TesterAjpMessage responseBody = ajpClient.readMessage();
+        validateResponseBody(responseBody, HelloWorldServlet.RESPONSE_TEXT);
+        validateResponseEnd(ajpClient.readMessage(), true);
+
+        ajpClient.disconnect();
+    }
+
+    @Test
     public void testKeepAlive() throws Exception {
         Tomcat tomcat = getTomcatInstance();
         Assert.assertTrue(tomcat.getConnector().setProperty("connectionTimeout", "-1"));
