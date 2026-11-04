@@ -392,6 +392,7 @@ public class HPackHuffman {
                         target.append((char) (val & LOW_MASK));
                         treePos = 0;
                         eosBits = true;
+                        eosBitCount = 0;
                     }
                 } else {
                     if (eosBits) {
@@ -409,6 +410,7 @@ public class HPackHuffman {
                         target.append((char) ((val >> 16) & LOW_MASK));
                         treePos = 0;
                         eosBits = true;
+                        eosBitCount = 0;
                     }
                 }
                 bitPos--;
